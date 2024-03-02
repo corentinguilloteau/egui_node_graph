@@ -18,16 +18,20 @@ pub struct Node<NodeData> {
 
 /// The three kinds of input params. These describe how the graph must behave
 /// with respect to inline widgets and connections for this parameter.
+/// The UI interactivness is controled by the params attibutes.
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub enum InputParamKind {
     /// No constant value can be set. Only incoming connections can produce it
-    ConnectionOnly,
+    ConnectionOnly { interactive: bool },
     /// Only a constant value can be set. No incoming connections accepted.
-    ConstantOnly,
+    ConstantOnly { interactive: bool },
     /// Both incoming connections and constants are accepted. Connections take
     /// precedence over the constant values.
-    ConnectionOrConstant,
+    ConnectionOrConstant {
+        interactive_connection: bool,
+        interactive_constant: bool,
+    },
 }
 
 #[cfg(feature = "persistence")]
@@ -71,6 +75,8 @@ pub struct OutputParam<DataType> {
     /// Back-reference to the node containing this parameter.
     pub node: NodeId,
     pub typ: DataType,
+    /// When true, the user can interact with this connection in the UI
+    pub interactive: bool,
 }
 
 /// The graph, containing nodes, input parameters and output parameters. Because

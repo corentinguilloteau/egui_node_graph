@@ -26,6 +26,7 @@ pub trait WidgetValueTrait: Default {
         ui: &mut egui::Ui,
         user_state: &mut Self::UserState,
         node_data: &Self::NodeData,
+        is_interactive: bool,
     ) -> Vec<Self::Response>;
 
     /// This method will be called for each input parameter with a widget with a connected

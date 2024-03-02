@@ -67,11 +67,18 @@ impl<NodeData, DataType, ValueType> Graph<NodeData, DataType, ValueType> {
         self.connections.retain(|_, o| *o != param);
     }
 
-    pub fn add_output_param(&mut self, node_id: NodeId, name: String, typ: DataType) -> OutputId {
+    pub fn add_output_param(
+        &mut self,
+        node_id: NodeId,
+        name: String,
+        typ: DataType,
+        interactive: bool,
+    ) -> OutputId {
         let output_id = self.outputs.insert_with_key(|output_id| OutputParam {
             id: output_id,
             node: node_id,
             typ,
+            interactive,
         });
         self.nodes[node_id].outputs.push((name, output_id));
         output_id
@@ -211,5 +218,19 @@ impl<DataType, ValueType> InputParam<DataType, ValueType> {
 
     pub fn node(&self) -> NodeId {
         self.node
+    }
+
+    pub fn set_kind(&mut self, kind: InputParamKind) {
+        self.kind = kind;
+    }
+}
+
+impl<DataType> OutputParam<DataType> {
+    pub fn node(&self) -> NodeId {
+        self.node
+    }
+
+    pub fn is_interactive(&self) -> bool {
+        self.interactive
     }
 }

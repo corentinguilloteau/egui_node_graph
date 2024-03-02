@@ -592,12 +592,22 @@ where
 
                         responses.extend(node_responses.into_iter().map(NodeResponse::User));
                     } else {
+                        let is_interactive = match self.graph[param_id].kind() {
+                            InputParamKind::ConnectionOnly { .. } => false,
+                            InputParamKind::ConstantOnly { interactive } => interactive,
+                            InputParamKind::ConnectionOrConstant {
+                                interactive_constant,
+                                ..
+                            } => interactive_constant,
+                        };
+
                         let node_responses = value.value_widget(
                             &param_name,
                             self.node_id,
                             ui,
                             user_state,
                             &self.graph[self.node_id].user_data,
+                            is_interactive,
                         );
 
                         responses.extend(node_responses.into_iter().map(NodeResponse::User));
@@ -673,6 +683,7 @@ where
             port_locations: &mut PortLocations,
             ongoing_drag: Option<(NodeId, AnyParameterId)>,
             is_connected_input: bool,
+            allow_interaction: bool,
         ) where
             DataType: DataTypeTrait<UserState>,
             UserResponse: UserResponseTrait,
@@ -697,7 +708,9 @@ where
                 false
             };
 
-            let port_color = if close_enough {
+            let port_color = if !allow_interaction {
+                port_type.data_type_color(user_state).lighten(0.6)
+            } else if close_enough {
                 Color32::WHITE
             } else {
                 port_type.data_type_color(user_state)
@@ -705,7 +718,7 @@ where
             ui.painter()
                 .circle(port_rect.center(), 5.0, port_color, Stroke::NONE);
 
-            if resp.drag_started() {
+            if allow_interaction && resp.drag_started() {
                 if is_connected_input {
                     let input = param_id.assume_input();
                     let corresp_output = graph
@@ -721,7 +734,7 @@ where
             }
 
             if let Some((origin_node, origin_param)) = ongoing_drag {
-                if origin_node != node_id {
+                if origin_node != node_id && allow_interaction {
                     // Don't allow self-loops
                     if graph.any_param_type(origin_param).unwrap() == port_type
                         && close_enough
@@ -748,9 +761,20 @@ where
             .zip(input_port_heights.into_iter())
         {
             let should_draw = match self.graph[*param].kind() {
-                InputParamKind::ConnectionOnly => true,
-                InputParamKind::ConstantOnly => false,
-                InputParamKind::ConnectionOrConstant => true,
+                InputParamKind::ConnectionOnly { .. } => true,
+                InputParamKind::ConstantOnly { .. } => false,
+                InputParamKind::ConnectionOrConstant { .. } => true,
+            };
+
+            let is_interactive = match self.graph[*param].kind() {
+                InputParamKind::ConnectionOnly {
+                    interactive: interactiveness,
+                } => interactiveness,
+                InputParamKind::ConstantOnly { .. } => false,
+                InputParamKind::ConnectionOrConstant {
+                    interactive_connection: interactiveness,
+                    ..
+                } => interactiveness,
             };
 
             if should_draw {
@@ -766,6 +790,7 @@ where
                     self.port_locations,
                     self.ongoing_drag,
                     self.graph.connection(*param).is_some(),
+                    is_interactive,
                 );
             }
         }
@@ -788,6 +813,7 @@ where
                 self.port_locations,
                 self.ongoing_drag,
                 false,
+                self.graph[*param].is_interactive(),
             );
         }
 
