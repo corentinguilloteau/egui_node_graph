@@ -11,6 +11,7 @@ use egui_node_graph::*;
 #[cfg_attr(feature = "persistence", derive(serde::Serialize, serde::Deserialize))]
 pub struct MyNodeData {
     template: MyNodeTemplate,
+    is_locked: bool,
 }
 
 /// `DataType`s are what defines the possible range of connections when
@@ -88,6 +89,8 @@ pub enum MyNodeTemplate {
 pub enum MyResponse {
     SetActiveNode(NodeId),
     ClearActiveNode,
+    LockNode(NodeId),
+    UnlockNode(NodeId),
 }
 
 /// The graph 'global' state. This state struct is passed around to the node and
@@ -159,7 +162,10 @@ impl NodeTemplateTrait for MyNodeTemplate {
     }
 
     fn user_data(&self, _user_state: &mut Self::UserState) -> Self::NodeData {
-        MyNodeData { template: *self }
+        MyNodeData {
+            template: *self,
+            is_locked: false,
+        }
     }
 
     fn build_node(
@@ -179,7 +185,10 @@ impl NodeTemplateTrait for MyNodeTemplate {
                 name.to_string(),
                 MyDataType::Scalar,
                 MyValueType::Scalar { value: 0.0 },
-                InputParamKind::ConnectionOrConstant,
+                InputParamKind::ConnectionOrConstant {
+                    interactive_connection: true,
+                    interactive_constant: true,
+                },
                 true,
             );
         };
@@ -191,16 +200,19 @@ impl NodeTemplateTrait for MyNodeTemplate {
                 MyValueType::Vec2 {
                     value: egui::vec2(0.0, 0.0),
                 },
-                InputParamKind::ConnectionOrConstant,
+                InputParamKind::ConnectionOrConstant {
+                    interactive_connection: true,
+                    interactive_constant: true,
+                },
                 true,
             );
         };
 
         let output_scalar = |graph: &mut MyGraph, name: &str| {
-            graph.add_output_param(node_id, name.to_string(), MyDataType::Scalar);
+            graph.add_output_param(node_id, name.to_string(), MyDataType::Scalar, true);
         };
         let output_vector = |graph: &mut MyGraph, name: &str| {
-            graph.add_output_param(node_id, name.to_string(), MyDataType::Vec2);
+            graph.add_output_param(node_id, name.to_string(), MyDataType::Vec2, true);
         };
 
         match self {
@@ -219,7 +231,10 @@ impl NodeTemplateTrait for MyNodeTemplate {
                     // The input parameter kind. This allows defining whether a
                     // parameter accepts input connections and/or an inline
                     // widget to set its value.
-                    InputParamKind::ConnectionOrConstant,
+                    InputParamKind::ConnectionOrConstant {
+                        interactive_connection: true,
+                        interactive_constant: true,
+                    },
                     true,
                 );
                 input_scalar(graph, "B");
@@ -289,10 +304,11 @@ impl WidgetValueTrait for MyValueType {
         ui: &mut egui::Ui,
         _user_state: &mut MyGraphState,
         _node_data: &MyNodeData,
+        is_interactive: bool,
     ) -> Vec<MyResponse> {
         // This trait is used to tell the library which UI to display for the
         // inline parameter widgets.
-        match self {
+        ui.add_enabled_ui(is_interactive, |ui| match self {
             MyValueType::Vec2 { value } => {
                 ui.label(param_name);
                 ui.horizontal(|ui| {
@@ -308,13 +324,15 @@ impl WidgetValueTrait for MyValueType {
                     ui.add(DragValue::new(value));
                 });
             }
-        }
+        });
+
         // This allows you to return your responses from the inline widgets.
         Vec::new()
     }
 }
 
 impl UserResponseTrait for MyResponse {}
+
 impl NodeDataTrait for MyNodeData {
     type Response = MyResponse;
     type UserState = MyGraphState;
@@ -364,7 +382,29 @@ impl NodeDataTrait for MyNodeData {
             }
         }
 
+        if !self.is_locked {
+            if ui.button("🔒 Lock").clicked() {
+                responses.push(NodeResponse::User(MyResponse::LockNode(node_id)));
+            }
+        } else {
+            let button =
+                egui::Button::new(egui::RichText::new("🔒 Unlock").color(egui::Color32::BLACK))
+                    .fill(egui::Color32::GOLD);
+            if ui.add(button).clicked() {
+                responses.push(NodeResponse::User(MyResponse::UnlockNode(node_id)));
+            }
+        }
+
         responses
+    }
+
+    fn can_delete(
+        &self,
+        node_id: NodeId,
+        graph: &Graph<Self, Self::DataType, Self::ValueType>,
+        _user_state: &mut Self::UserState,
+    ) -> bool {
+        !graph.nodes[node_id].user_data.is_locked
     }
 }
 
@@ -433,6 +473,8 @@ impl eframe::App for NodeGraphExample {
                 match user_event {
                     MyResponse::SetActiveNode(node) => self.user_state.active_node = Some(node),
                     MyResponse::ClearActiveNode => self.user_state.active_node = None,
+                    MyResponse::LockNode(node) => lock_node(&mut self.state.graph, node),
+                    MyResponse::UnlockNode(node) => unlock_node(&mut self.state.graph, node),
                 }
             }
         }
@@ -458,6 +500,56 @@ impl eframe::App for NodeGraphExample {
 }
 
 type OutputsCache = HashMap<OutputId, MyValueType>;
+
+pub fn lock_node(graph: &mut MyGraph, node_id: NodeId) {
+    for (_, input_id) in &graph.nodes[node_id].inputs {
+        let new_kind = match graph.inputs[*input_id].kind() {
+            InputParamKind::ConnectionOnly { .. } => {
+                InputParamKind::ConnectionOnly { interactive: false }
+            }
+            InputParamKind::ConstantOnly { .. } => {
+                InputParamKind::ConstantOnly { interactive: false }
+            }
+            InputParamKind::ConnectionOrConstant { .. } => InputParamKind::ConnectionOrConstant {
+                interactive_connection: false,
+                interactive_constant: false,
+            },
+        };
+
+        graph.inputs[*input_id].set_kind(new_kind);
+    }
+
+    for (_, output_id) in &graph.nodes[node_id].outputs {
+        graph.outputs[*output_id].interactive = false;
+    }
+
+    graph.nodes[node_id].user_data.is_locked = true;
+}
+
+pub fn unlock_node(graph: &mut MyGraph, node_id: NodeId) {
+    for (_, input_id) in &graph.nodes[node_id].inputs {
+        let new_kind = match graph.inputs[*input_id].kind() {
+            InputParamKind::ConnectionOnly { .. } => {
+                InputParamKind::ConnectionOnly { interactive: true }
+            }
+            InputParamKind::ConstantOnly { .. } => {
+                InputParamKind::ConstantOnly { interactive: true }
+            }
+            InputParamKind::ConnectionOrConstant { .. } => InputParamKind::ConnectionOrConstant {
+                interactive_connection: true,
+                interactive_constant: true,
+            },
+        };
+
+        graph.inputs[*input_id].set_kind(new_kind);
+    }
+
+    for (_, output_id) in &graph.nodes[node_id].outputs {
+        graph.outputs[*output_id].interactive = true;
+    }
+
+    graph.nodes[node_id].user_data.is_locked = false;
+}
 
 /// Recursively evaluates all dependencies of this node, then evaluates the node itself.
 pub fn evaluate_node(
